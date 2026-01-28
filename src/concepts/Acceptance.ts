@@ -1,67 +1,85 @@
 // concepts/Acceptance.ts
 import { Concept } from '@legible-sync/core';
+import { createServerClient } from '../lib/supabase';
 
 export const Acceptance: Concept = {
-  state: {
-    acceptances: new Map<string, any>(),
-    byResolutionUser: new Map<string, string>(), // resolutionId:userId -> acceptanceId
-  },
+  state: {},
 
   async execute(action: string, input: any) {
-    const state = this.state;
+    const supabase = createServerClient();
 
     if (action === 'accept') {
       const { acceptanceId, resolutionId, userId, disputeId } = input;
-      const key = `${resolutionId}:${userId}`;
 
-      const existingId = state.byResolutionUser.get(key);
-      if (existingId) {
-        const existing = state.acceptances.get(existingId);
-        existing.accepted = true;
-        existing.feedback = null;
-        return { acceptanceId: existingId, resolutionId, userId, disputeId, accepted: true };
+      // Check for existing acceptance
+      const { data: existing } = await supabase
+        .from('acceptances')
+        .select('*')
+        .eq('resolution_id', resolutionId)
+        .eq('user_id', userId)
+        .single();
+
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from('acceptances')
+          .update({ accepted: true, feedback: null })
+          .eq('id', existing.id);
+
+        if (updateError) throw new Error(updateError.message);
+        return { acceptanceId: existing.id, resolutionId, userId, disputeId, accepted: true };
       }
 
-      const acceptance = {
-        id: acceptanceId,
-        resolutionId,
-        userId,
-        disputeId,
-        accepted: true,
-        feedback: null,
-        createdAt: new Date().toISOString(),
-      };
+      const { data, error } = await supabase
+        .from('acceptances')
+        .insert({
+          id: acceptanceId,
+          resolution_id: resolutionId,
+          user_id: userId,
+          accepted: true,
+          feedback: null,
+        })
+        .select()
+        .single();
 
-      state.acceptances.set(acceptanceId, acceptance);
-      state.byResolutionUser.set(key, acceptanceId);
+      if (error) throw new Error(error.message);
 
       return { acceptanceId, resolutionId, userId, disputeId, accepted: true };
     }
 
     if (action === 'reject') {
       const { acceptanceId, resolutionId, userId, disputeId, feedback } = input;
-      const key = `${resolutionId}:${userId}`;
 
-      const existingId = state.byResolutionUser.get(key);
-      if (existingId) {
-        const existing = state.acceptances.get(existingId);
-        existing.accepted = false;
-        existing.feedback = feedback || null;
-        return { acceptanceId: existingId, resolutionId, userId, disputeId, accepted: false, feedback };
+      // Check for existing acceptance
+      const { data: existing } = await supabase
+        .from('acceptances')
+        .select('*')
+        .eq('resolution_id', resolutionId)
+        .eq('user_id', userId)
+        .single();
+
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from('acceptances')
+          .update({ accepted: false, feedback: feedback || null })
+          .eq('id', existing.id);
+
+        if (updateError) throw new Error(updateError.message);
+        return { acceptanceId: existing.id, resolutionId, userId, disputeId, accepted: false, feedback };
       }
 
-      const acceptance = {
-        id: acceptanceId,
-        resolutionId,
-        userId,
-        disputeId,
-        accepted: false,
-        feedback: feedback || null,
-        createdAt: new Date().toISOString(),
-      };
+      const { data, error } = await supabase
+        .from('acceptances')
+        .insert({
+          id: acceptanceId,
+          resolution_id: resolutionId,
+          user_id: userId,
+          accepted: false,
+          feedback: feedback || null,
+        })
+        .select()
+        .single();
 
-      state.acceptances.set(acceptanceId, acceptance);
-      state.byResolutionUser.set(key, acceptanceId);
+      if (error) throw new Error(error.message);
 
       return { acceptanceId, resolutionId, userId, disputeId, accepted: false, feedback };
     }
@@ -69,14 +87,19 @@ export const Acceptance: Concept = {
     if (action === 'getStatus') {
       const { resolutionId, creatorId, opponentId } = input;
 
-      const creatorKey = `${resolutionId}:${creatorId}`;
-      const opponentKey = `${resolutionId}:${opponentId}`;
+      const { data: creatorAcceptance } = await supabase
+        .from('acceptances')
+        .select('*')
+        .eq('resolution_id', resolutionId)
+        .eq('user_id', creatorId)
+        .single();
 
-      const creatorAcceptanceId = state.byResolutionUser.get(creatorKey);
-      const opponentAcceptanceId = state.byResolutionUser.get(opponentKey);
-
-      const creatorAcceptance = creatorAcceptanceId ? state.acceptances.get(creatorAcceptanceId) : null;
-      const opponentAcceptance = opponentAcceptanceId ? state.acceptances.get(opponentAcceptanceId) : null;
+      const { data: opponentAcceptance } = await supabase
+        .from('acceptances')
+        .select('*')
+        .eq('resolution_id', resolutionId)
+        .eq('user_id', opponentId)
+        .single();
 
       const bothAccepted = creatorAcceptance?.accepted === true && opponentAcceptance?.accepted === true;
 

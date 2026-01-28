@@ -1,75 +1,102 @@
 // concepts/Argument.ts
 import { Concept } from '@legible-sync/core';
+import { createServerClient } from '../lib/supabase';
 
 export const Argument: Concept = {
-  state: {
-    arguments: new Map<string, any>(),
-    byDispute: new Map<string, string[]>(), // disputeId -> argumentIds
-  },
+  state: {},
 
   async execute(action: string, input: any) {
-    const state = this.state;
+    const supabase = createServerClient();
 
     if (action === 'draft') {
       const { argumentId, disputeId, userId, content, evidence } = input;
       if (!content) throw new Error('Content required');
 
-      // Get argument number
-      const disputeArgs = state.byDispute.get(disputeId) || [];
-      const userArgs = disputeArgs.filter((id: string) => {
-        const arg = state.arguments.get(id);
-        return arg && arg.authorId === userId;
-      });
-      const argumentNumber = userArgs.length + 1;
+      // Get argument number for this user in this dispute
+      const { data: existingArgs, error: countError } = await supabase
+        .from('arguments')
+        .select('id')
+        .eq('dispute_id', disputeId)
+        .eq('author_id', userId);
 
-      const argument = {
-        id: argumentId,
-        disputeId,
-        authorId: userId,
-        content,
-        evidence: evidence || null,
-        argumentNumber,
-        isFinal: false,
-        aiAssisted: false,
-        originalContent: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+      if (countError) throw new Error(countError.message);
 
-      state.arguments.set(argumentId, argument);
-      state.byDispute.set(disputeId, [...disputeArgs, argumentId]);
+      const argumentNumber = (existingArgs?.length || 0) + 1;
+
+      const { data, error } = await supabase
+        .from('arguments')
+        .insert({
+          id: argumentId,
+          dispute_id: disputeId,
+          author_id: userId,
+          content,
+          evidence: evidence || null,
+          argument_number: argumentNumber,
+          is_final: false,
+          ai_assisted: false,
+          original_content: null,
+        })
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
 
       return { argumentId, disputeId, authorId: userId, argumentNumber, content, isFinal: false };
     }
 
     if (action === 'update') {
       const { argumentId, content, aiAssisted, originalContent } = input;
-      const argument = state.arguments.get(argumentId);
-      if (!argument) throw new Error('Argument not found');
-      if (argument.isFinal) throw new Error('Cannot update finalized argument');
 
-      if (content !== undefined) argument.content = content;
-      if (aiAssisted !== undefined) argument.aiAssisted = aiAssisted;
-      if (originalContent !== undefined) argument.originalContent = originalContent;
-      argument.updatedAt = new Date().toISOString();
+      const { data: argument, error: fetchError } = await supabase
+        .from('arguments')
+        .select('*')
+        .eq('id', argumentId)
+        .single();
 
-      return { argumentId, content: argument.content, aiAssisted: argument.aiAssisted, updated: true };
+      if (fetchError || !argument) throw new Error('Argument not found');
+      if (argument.is_final) throw new Error('Cannot update finalized argument');
+
+      const updates: Record<string, any> = {};
+      if (content !== undefined) updates.content = content;
+      if (aiAssisted !== undefined) updates.ai_assisted = aiAssisted;
+      if (originalContent !== undefined) updates.original_content = originalContent;
+
+      const { data: updated, error: updateError } = await supabase
+        .from('arguments')
+        .update(updates)
+        .eq('id', argumentId)
+        .select()
+        .single();
+
+      if (updateError) throw new Error(updateError.message);
+
+      return { argumentId, content: updated.content, aiAssisted: updated.ai_assisted, updated: true };
     }
 
     if (action === 'finalize') {
       const { argumentId } = input;
-      const argument = state.arguments.get(argumentId);
-      if (!argument) throw new Error('Argument not found');
-      if (argument.isFinal) throw new Error('Argument already finalized');
 
-      argument.isFinal = true;
-      argument.updatedAt = new Date().toISOString();
+      const { data: argument, error: fetchError } = await supabase
+        .from('arguments')
+        .select('*')
+        .eq('id', argumentId)
+        .single();
+
+      if (fetchError || !argument) throw new Error('Argument not found');
+      if (argument.is_final) throw new Error('Argument already finalized');
+
+      const { error: updateError } = await supabase
+        .from('arguments')
+        .update({ is_final: true })
+        .eq('id', argumentId);
+
+      if (updateError) throw new Error(updateError.message);
 
       return {
         argumentId,
-        disputeId: argument.disputeId,
-        authorId: argument.authorId,
-        argumentNumber: argument.argumentNumber,
+        disputeId: argument.dispute_id,
+        authorId: argument.author_id,
+        argumentNumber: argument.argument_number,
         content: argument.content,
         isFinal: true,
       };
@@ -77,9 +104,31 @@ export const Argument: Concept = {
 
     if (action === 'getByDispute') {
       const { disputeId } = input;
-      const argumentIds = state.byDispute.get(disputeId) || [];
-      const args = argumentIds.map((id: string) => state.arguments.get(id)).filter(Boolean);
-      return { arguments: args };
+
+      const { data: args, error } = await supabase
+        .from('arguments')
+        .select('*')
+        .eq('dispute_id', disputeId)
+        .order('argument_number', { ascending: true });
+
+      if (error) throw new Error(error.message);
+
+      // Map snake_case to camelCase
+      const mappedArgs = (args || []).map(arg => ({
+        id: arg.id,
+        disputeId: arg.dispute_id,
+        authorId: arg.author_id,
+        content: arg.content,
+        evidence: arg.evidence,
+        argumentNumber: arg.argument_number,
+        isFinal: arg.is_final,
+        aiAssisted: arg.ai_assisted,
+        originalContent: arg.original_content,
+        createdAt: arg.created_at,
+        updatedAt: arg.updated_at,
+      }));
+
+      return { arguments: mappedArgs };
     }
 
     throw new Error(`Unknown action: ${action}`);

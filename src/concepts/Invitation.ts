@@ -1,5 +1,6 @@
 // concepts/Invitation.ts
 import { Concept } from '@legible-sync/core';
+import { createServerClient } from '../lib/supabase';
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -11,55 +12,67 @@ function generateCode(): string {
 }
 
 export const Invitation: Concept = {
-  state: {
-    invitations: new Map<string, any>(),
-    codeIndex: new Map<string, string>(), // code -> invitationId
-  },
+  state: {},
 
   async execute(action: string, input: any) {
-    const state = this.state;
+    const supabase = createServerClient();
 
     if (action === 'generate') {
       const { invitationId, disputeId, email } = input;
       const code = generateCode();
 
-      const invitation = {
-        id: invitationId,
-        disputeId,
-        code,
-        email: email || null,
-        used: false,
-        createdAt: new Date().toISOString(),
-      };
+      const { data, error } = await supabase
+        .from('invitations')
+        .insert({
+          id: invitationId,
+          dispute_id: disputeId,
+          code,
+          email: email || null,
+          used: false,
+        })
+        .select()
+        .single();
 
-      state.invitations.set(invitationId, invitation);
-      state.codeIndex.set(code, invitationId);
+      if (error) throw new Error(error.message);
 
       return { invitationId, code, disputeId, email };
     }
 
     if (action === 'validate') {
       const { code } = input;
-      const invitationId = state.codeIndex.get(code);
-      if (!invitationId) return { valid: false, reason: 'Invitation not found' };
 
-      const invitation = state.invitations.get(invitationId);
+      const { data: invitation, error } = await supabase
+        .from('invitations')
+        .select('*')
+        .eq('code', code)
+        .single();
+
+      if (error || !invitation) return { valid: false, reason: 'Invitation not found' };
       if (invitation.used) return { valid: false, reason: 'Invitation already used' };
 
-      return { valid: true, invitationId, disputeId: invitation.disputeId };
+      return { valid: true, invitationId: invitation.id, disputeId: invitation.dispute_id };
     }
 
     if (action === 'consume') {
       const { code, userId } = input;
-      const invitationId = state.codeIndex.get(code);
-      if (!invitationId) throw new Error('Invitation not found');
 
-      const invitation = state.invitations.get(invitationId);
+      const { data: invitation, error: fetchError } = await supabase
+        .from('invitations')
+        .select('*')
+        .eq('code', code)
+        .single();
+
+      if (fetchError || !invitation) throw new Error('Invitation not found');
       if (invitation.used) throw new Error('Invitation already used');
 
-      invitation.used = true;
+      const { error: updateError } = await supabase
+        .from('invitations')
+        .update({ used: true })
+        .eq('id', invitation.id);
 
-      return { invitationId, disputeId: invitation.disputeId, userId, consumed: true };
+      if (updateError) throw new Error(updateError.message);
+
+      return { invitationId: invitation.id, disputeId: invitation.dispute_id, userId, consumed: true };
     }
 
     throw new Error(`Unknown action: ${action}`);

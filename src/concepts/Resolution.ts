@@ -1,14 +1,12 @@
 // concepts/Resolution.ts
 import { Concept } from '@legible-sync/core';
+import { createServerClient } from '../lib/supabase';
 
 export const Resolution: Concept = {
-  state: {
-    resolutions: new Map<string, any>(),
-    byDispute: new Map<string, string>(), // disputeId -> resolutionId
-  },
+  state: {},
 
   async execute(action: string, input: any) {
-    const state = this.state;
+    const supabase = createServerClient();
 
     if (action === 'generate') {
       const {
@@ -23,43 +21,92 @@ export const Resolution: Concept = {
         recommendations,
       } = input;
 
-      if (state.byDispute.has(disputeId)) {
+      // Check if resolution already exists
+      const { data: existing } = await supabase
+        .from('resolutions')
+        .select('id')
+        .eq('dispute_id', disputeId)
+        .single();
+
+      if (existing) {
         throw new Error('Resolution already exists for this dispute');
       }
 
-      const resolution = {
-        id: resolutionId,
-        disputeId,
-        summary,
-        detailedAnalysis,
-        verdict,
-        partyAEval: partyAEval || null,
-        partyBEval: partyBEval || null,
-        keyFactors: keyFactors || [],
-        recommendations: recommendations || [],
-        createdAt: new Date().toISOString(),
-      };
+      const { data, error } = await supabase
+        .from('resolutions')
+        .insert({
+          id: resolutionId,
+          dispute_id: disputeId,
+          summary,
+          detailed_analysis: detailedAnalysis,
+          verdict,
+          party_a_eval: partyAEval || null,
+          party_b_eval: partyBEval || null,
+          key_factors: keyFactors || [],
+          recommendations: recommendations || [],
+        })
+        .select()
+        .single();
 
-      state.resolutions.set(resolutionId, resolution);
-      state.byDispute.set(disputeId, resolutionId);
+      if (error) throw new Error(error.message);
 
       return { resolutionId, disputeId, summary, verdict };
     }
 
     if (action === 'get') {
       const { disputeId } = input;
-      const resolutionId = state.byDispute.get(disputeId);
-      if (!resolutionId) return { resolution: null };
 
-      const resolution = state.resolutions.get(resolutionId);
-      return { resolution };
+      const { data: resolution, error } = await supabase
+        .from('resolutions')
+        .select('*')
+        .eq('dispute_id', disputeId)
+        .single();
+
+      if (error || !resolution) return { resolution: null };
+
+      // Map snake_case to camelCase
+      return {
+        resolution: {
+          id: resolution.id,
+          disputeId: resolution.dispute_id,
+          summary: resolution.summary,
+          detailedAnalysis: resolution.detailed_analysis,
+          verdict: resolution.verdict,
+          partyAEval: resolution.party_a_eval,
+          partyBEval: resolution.party_b_eval,
+          keyFactors: resolution.key_factors,
+          recommendations: resolution.recommendations,
+          createdAt: resolution.created_at,
+        }
+      };
     }
 
     if (action === 'getById') {
       const { resolutionId } = input;
-      const resolution = state.resolutions.get(resolutionId);
-      if (!resolution) throw new Error('Resolution not found');
-      return { resolution };
+
+      const { data: resolution, error } = await supabase
+        .from('resolutions')
+        .select('*')
+        .eq('id', resolutionId)
+        .single();
+
+      if (error || !resolution) throw new Error('Resolution not found');
+
+      // Map snake_case to camelCase
+      return {
+        resolution: {
+          id: resolution.id,
+          disputeId: resolution.dispute_id,
+          summary: resolution.summary,
+          detailedAnalysis: resolution.detailed_analysis,
+          verdict: resolution.verdict,
+          partyAEval: resolution.party_a_eval,
+          partyBEval: resolution.party_b_eval,
+          keyFactors: resolution.key_factors,
+          recommendations: resolution.recommendations,
+          createdAt: resolution.created_at,
+        }
+      };
     }
 
     throw new Error(`Unknown action: ${action}`);
