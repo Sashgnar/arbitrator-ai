@@ -1,4 +1,4 @@
-// src/index.ts - ArgumentApp exports
+// src/index.ts - Arbitrator AI exports
 export { Dispute } from './concepts/Dispute';
 export { Invitation } from './concepts/Invitation';
 export { Argument } from './concepts/Argument';

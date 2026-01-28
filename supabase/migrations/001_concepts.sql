@@ -1,5 +1,5 @@
 -- Migration: 001_concepts.sql
--- Description: Create tables for all concepts in the ArgumentApp
+-- Description: Create tables for all concepts in Arbitrator AI
 
 -- User profiles (extends Supabase Auth)
 CREATE TABLE IF NOT EXISTS profiles (
